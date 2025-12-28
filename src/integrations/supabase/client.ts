@@ -1,0 +1,1 @@
+export const DISABLED_EXTERNAL_DB_CLIENT = null;
