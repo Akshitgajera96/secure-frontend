@@ -170,7 +170,25 @@ const OutputPreview = () => {
   const handlePrint = useCallback(() => {
     if (!resolvedPdfUrl) return;
     const win = window.open(resolvedPdfUrl, '_blank', 'noopener,noreferrer');
-    win?.print?.();
+    if (!win) return;
+
+    const tryPrint = () => {
+      try {
+        win.focus();
+        win.print();
+      } catch {
+        // ignore
+      }
+    };
+
+    try {
+      win.addEventListener('load', tryPrint, { once: true });
+    } catch {
+      // ignore
+    }
+
+    // Fallback: some browsers won't fire load for PDF viewer. Try after a short delay.
+    setTimeout(tryPrint, 1200);
   }, [resolvedPdfUrl]);
 
   const handleAssignPdf = async () => {
