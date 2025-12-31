@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, ChevronLeft, ChevronRight, Printer } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -21,6 +21,8 @@ const OutputPreview = () => {
   const navigate = useNavigate();
   const { token, user } = useAuth();
   const { outputId, previewId } = useParams();
+
+  const refreshTimerRef = useRef<number | null>(null);
 
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [pageCount, setPageCount] = useState<number>(0);
@@ -103,6 +105,37 @@ const OutputPreview = () => {
             setPdfUrl(null);
             setPreviewS3Key(null);
 
+            const clearRefresh = () => {
+              if (refreshTimerRef.current) {
+                window.clearInterval(refreshTimerRef.current);
+                refreshTimerRef.current = null;
+              }
+            };
+
+            const fetchResultUrl = async () => {
+              const resultRes = await api.get(`/api/vector/jobs/${encodeURIComponent(parsedJobId)}/result`, {
+                params: { t: Date.now() },
+                headers: {
+                  ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                  'Cache-Control': 'no-cache',
+                  Pragma: 'no-cache',
+                },
+              });
+              const rr = resultRes.data as any;
+              const fileUrl = String(rr?.fileUrl || '').trim();
+              if (!fileUrl) throw new Error('Missing fileUrl');
+              if (cancelled) return;
+              setPdfUrl(fileUrl);
+              setPreviewS3Key(typeof rr?.key === 'string' && rr.key.trim() ? rr.key.trim() : null);
+
+              // Refresh signed URL periodically to avoid expiry -> white iframe.
+              // Default 5 minutes (safe even if backend TTL is short).
+              clearRefresh();
+              refreshTimerRef.current = window.setInterval(() => {
+                fetchResultUrl().catch(() => null);
+              }, 5 * 60 * 1000);
+            };
+
             const pollIntervalMs = 1000;
             const timeoutMs = 10 * 60 * 1000;
             const startedAt = Date.now();
@@ -118,20 +151,7 @@ const OutputPreview = () => {
               });
               const st = statusRes.data as any;
               if (st?.status === 'DONE') {
-                const resultRes = await api.get(`/api/vector/jobs/${encodeURIComponent(parsedJobId)}/result`, {
-                  params: { t: Date.now() },
-                  headers: {
-                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-                    'Cache-Control': 'no-cache',
-                    Pragma: 'no-cache',
-                  },
-                });
-                const rr = resultRes.data as any;
-                const fileUrl = String(rr?.fileUrl || '').trim();
-                if (!fileUrl) throw new Error('Missing fileUrl');
-                if (cancelled) return;
-                setPdfUrl(fileUrl);
-                setPreviewS3Key(typeof rr?.key === 'string' && rr.key.trim() ? rr.key.trim() : null);
+                await fetchResultUrl();
                 setLoading(false);
                 return;
               }
@@ -164,6 +184,10 @@ const OutputPreview = () => {
 
     return () => {
       cancelled = true;
+      if (refreshTimerRef.current) {
+        window.clearInterval(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
     };
   }, [outputId, previewId, token]);
 
