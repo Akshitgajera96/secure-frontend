@@ -167,11 +167,12 @@ const Viewer = () => {
         '/api/docs/secure-render',
         { sessionToken, requestId: stableRequestId },
         {
+          params: { mode: 'url' },
           headers: {
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
             'X-Request-Id': stableRequestId,
+            Accept: 'application/json',
           },
-          responseType: 'blob',
           validateStatus: (s) => (s >= 200 && s < 300) || s === 409,
         }
       );
@@ -181,13 +182,16 @@ const Viewer = () => {
         return;
       }
 
-      const blob = res.data as Blob;
-      const url = URL.createObjectURL(blob);
+      const data = res.data as any;
+      const nextUrl = String(data?.fileUrl || '').trim();
+      if (!nextUrl) {
+        throw new Error('Missing fileUrl');
+      }
       if (pdfUrlRef.current) {
         URL.revokeObjectURL(pdfUrlRef.current);
+        pdfUrlRef.current = null;
       }
-      pdfUrlRef.current = url;
-      setPdfUrl(url);
+      setPdfUrl(nextUrl);
     } catch (e) {
       const eAny = e as any;
       const msg = String(eAny?.response?.data?.message || eAny?.message || '').trim();
@@ -232,44 +236,24 @@ const Viewer = () => {
 
       const pdfUrl = data.fileUrl;
 
-      const printWindow = window.open('', '_blank', 'width=900,height=700');
+      const printWindow = window.open(pdfUrl, '_blank', 'noopener,noreferrer');
       if (printWindow) {
-        printWindow.document.write(`
-          <!DOCTYPE html>
-          <html>
-            <head>
-              <title>Secure Print - ${documentTitle}</title>
-              <style>
-                html, body {
-                  margin: 0;
-                  padding: 0;
-                  height: 100%;
-                  width: 100%;
-                }
-                iframe {
-                  border: 0;
-                  width: 100%;
-                  height: 100%;
-                }
-              </style>
-            </head>
-            <body oncontextmenu="return false" ondragstart="return false">
-              <iframe id="printFrame" src="${pdfUrl}"></iframe>
-              <script>
-                const iframe = document.getElementById('printFrame');
-                iframe.onload = function () {
-                  try {
-                    iframe.contentWindow.focus();
-                    iframe.contentWindow.print();
-                  } catch (e) {
-                    console.error('Print failed', e);
-                  }
-                };
-              </script>
-            </body>
-          </html>
-        `);
-        printWindow.document.close();
+        const tryPrint = () => {
+          try {
+            printWindow.focus();
+            printWindow.print();
+          } catch {
+            // ignore
+          }
+        };
+
+        try {
+          printWindow.addEventListener('load', tryPrint, { once: true });
+        } catch {
+          // ignore
+        }
+
+        setTimeout(tryPrint, 1200);
       }
 
       setShowPrintDialog(false);
